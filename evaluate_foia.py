@@ -1,15 +1,17 @@
 import os
 import json
+import time
 from dotenv import load_dotenv
 
-# Load environment variables (like OPENAI_API_KEY and CONSULAR_CACHE_DIR)
+# Load environment variables (like GEMINI_API_KEY and CONSULAR_CACHE_DIR)
 load_dotenv()
 
-# We only import OpenAI if the key exists to avoid the immediate initialization error
-api_key = os.environ.get("OPENAI_API_KEY")
+# We only import the GenAI SDK if the key exists to avoid immediate errors
+api_key = os.environ.get("GEMINI_API_KEY")
 if api_key:
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+    from google import genai
+    from google.genai import types
+    client = genai.Client()
 else:
     client = None
 
@@ -34,10 +36,10 @@ def load_sample_posts(limit=20):
 
 def evaluate_post_for_foia(title, content):
     """
-    Sends the post to OpenAI to determine if it's a good candidate for an Information Disclosure Request (정보공개청구).
+    Sends the post to Google Gemini to determine if it's a good candidate for an Information Disclosure Request (정보공개청구).
     """
     if not client:
-        return "LLM 클라이언트가 초기화되지 않았습니다. API 키를 확인해주세요."
+        return "LLM 클라이언트가 초기화되지 않았습니다. GEMINI_API_KEY를 확인해주세요."
 
     prompt = f"""
     당신은 대한민국 공공기관(특히 재외공관)을 상대로 '정보공개청구(Information Disclosure Request)' 전략을 기획하는 전문가입니다.
@@ -62,12 +64,14 @@ def evaluate_post_for_foia(title, content):
     """
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2, # Low temperature for more analytical and consistent reasoning
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2 # Low temperature for more analytical and consistent reasoning
+            )
         )
-        return response.choices[0].message.content.strip()
+        return response.text.strip()
     except Exception as e:
         return f"LLM 오류: {e}"
 
@@ -86,7 +90,7 @@ def run_evaluation():
         print(f"[{i}/{len(posts)}] 공지 제목: {title}")
 
         if not client:
-            print("  -> 평가 건너뜀 (OPENAI_API_KEY가 설정되지 않았습니다.)\n")
+            print("  -> 평가 건너뜀 (GEMINI_API_KEY가 설정되지 않았습니다.)\n")
             continue
 
         print("  -> LLM 평가 중...")
@@ -94,6 +98,9 @@ def run_evaluation():
         print("  --- 평가 결과 ---")
         print(f"  {result}")
         print("  -----------------\n")
+
+        # Add sleep to avoid rate limits (especially for free tier API keys)
+        time.sleep(3)
 
 if __name__ == "__main__":
     run_evaluation()
