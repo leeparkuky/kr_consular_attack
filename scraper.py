@@ -1,11 +1,7 @@
 import time
 import requests
 from bs4 import BeautifulSoup
-from openai import OpenAI
 import re
-
-# Initialize your LLM client (adjust based on your provider)
-client = OpenAI(api_key="YOUR_OPENAI_API_KEY")
 
 BASE_URL = "https://usa-atlanta.mofa.go.kr"
 # The exact URL structure for the notice board list
@@ -14,30 +10,6 @@ LIST_URL = "https://usa-atlanta.mofa.go.kr/us-atlanta-ko/brd/m_4878/list.do"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
-
-def ask_llm_about_post(title, content):
-    """
-    Sends the scraped post text to the LLM to process.
-    """
-    prompt = f"""
-    You are an assistant analyzing official embassy notices.
-    Review the following post and determine if it requires urgent action from citizens (e.g., safety warnings, office hour changes).
-
-    Title: {title}
-    Content: {content}
-
-    Provide a brief 1-sentence summary and classify it as 'Urgent' or 'Routine'.
-    """
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"LLM Processing Error: {e}"
 
 def scrape_post_content(detail_url):
     """
@@ -57,10 +29,12 @@ def scrape_post_content(detail_url):
         return content_div.get_text(separator="\n", strip=True)
     return "Could not extract body content."
 
-def scrape_notice_board(max_pages=2):
+def scrape_notice_board(max_pages=100):
     """
     Scrapes the list page, handles pagination, and extracts post links.
     """
+    seen_seqs = set()
+
     for page in range(1, max_pages + 1):
         print(f"\n--- Scraping Page {page} ---")
 
@@ -77,6 +51,8 @@ def scrape_notice_board(max_pages=2):
         # Find the board table rows
         # The list items are wrapped inside standard table rows (tr) within the table body
         rows = soup.select("table tbody tr")
+
+        new_posts_found_on_page = 0
 
         for row in rows:
             # Extract the title link element
@@ -98,6 +74,13 @@ def scrape_notice_board(max_pages=2):
             if not title or not seq:
                 continue
 
+            if seq in seen_seqs:
+                # We have already scraped this post (e.g. pinned notices appear on every page)
+                continue
+
+            seen_seqs.add(seq)
+            new_posts_found_on_page += 1
+
             # Build absolute URL for the detail page
             detail_url = f"https://usa-atlanta.mofa.go.kr/us-atlanta-ko/brd/m_4878/view.do?seq={seq}&page={page}"
 
@@ -107,15 +90,18 @@ def scrape_notice_board(max_pages=2):
             # 1. Scrape individual post text
             post_content = scrape_post_content(detail_url)
 
-            # 2. Pass data to the LLM
-            print("Sending to LLM...")
-            llm_decision = ask_llm_about_post(title, post_content)
-
-            print(f"LLM Result:\n{llm_decision}")
+            print("=== Post Content ===")
+            print(post_content)
+            print("====================")
 
             # Polite delay to avoid stressing the embassy server
             time.sleep(1.5)
 
+        # If we didn't find any new posts on this page, it means we've reached the end
+        if new_posts_found_on_page == 0:
+            print(f"\nNo new posts found on page {page}. Stopping pagination.")
+            break
+
 if __name__ == "__main__":
-    # Adjust max_pages to scrape further back in time
-    scrape_notice_board(max_pages=1)
+    # Scrapes all available pages up to the limit
+    scrape_notice_board(max_pages=2)
